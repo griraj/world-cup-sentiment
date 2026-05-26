@@ -1,0 +1,70 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────
+#  World Cup Sentiment Tracker – Docker Compose
+#
+#  Services:
+#    app       – Dash dashboard + pipeline (default: mock stream + SQLite)
+#    postgres  – Optional PostgreSQL (uncomment to use)
+#    redis     – Optional Redis for caching (uncomment to use)
+# ─────────────────────────────────────────────────────
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: worldcup_sentiment_app
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./data:/app/data          # persist SQLite DB and logs
+    env_file:
+      - .env
+    environment:
+      - USE_MOCK_STREAM=${USE_MOCK_STREAM:-true}
+      - PORT=8050
+      - HOST=0.0.0.0
+      # Uncomment for PostgreSQL:
+      # - DATABASE_URL=postgresql://wcuser:wcpass@postgres:5432/worldcup
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8050/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s   # allow model loading time
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+
+  # ── Optional: PostgreSQL ──────────────────────────
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: worldcup_postgres
+  #   environment:
+  #     POSTGRES_USER: wcuser
+  #     POSTGRES_PASSWORD: wcpass
+  #     POSTGRES_DB: worldcup
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U wcuser -d worldcup"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # ── Optional: Redis ───────────────────────────────
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: worldcup_redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
