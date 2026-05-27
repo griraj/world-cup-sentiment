@@ -66,8 +66,9 @@ export async function GET() {
       }
     })
 
-    const { error: insertError } = await db.from('posts').insert(enriched)
+    const { data: insertData, error: insertError } = await db.from('posts').insert(enriched).select('post_id')
     if (insertError) return NextResponse.json({ insertError: insertError.message, code: insertError.code, details: insertError.details }, { status: 500 })
+    const actuallyInserted = insertData?.length || 0
 
     await updateMetrics(db, enriched)
 
@@ -105,4 +106,5 @@ async function updateMetrics(db, posts) {
     await db.from('metrics_minutely').insert({ bucket_time: bucket, team_tag: null, post_count: n, positive_count: pos, negative_count: neg, neutral_count: neu, sentiment_score: score })
   }
 }
+
 
