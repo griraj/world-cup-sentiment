@@ -13,38 +13,51 @@ const USE_MOCK = process.env.USE_MOCK_STREAM === 'true'
 export async function GET() {
   const db = getAdminClient()
   const startTime = Date.now()
+  const log = []
 
   try {
+    // 1. Fetch posts
     let rawPosts = []
-
     if (USE_MOCK) {
       rawPosts = await fetchRecentPosts(20)
+      log.push(`mock: ${rawPosts.length} posts`)
     } else {
-      const [redditPosts, blueskyPosts, rssPosts] = await Promise.allSettled([
+      const [r, b, s] = await Promise.allSettled([
         fetchRecentPosts(15),
         fetchBlueskyPosts(10),
         fetchRSSPosts(10),
       ])
-      rawPosts = [
-        ...(redditPosts.status === 'fulfilled' ? redditPosts.value : []),
-        ...(blueskyPosts.status === 'fulfilled' ? blueskyPosts.value : []),
-        ...(rssPosts.status === 'fulfilled' ? rssPosts.value : []),
-      ]
+      const reddit  = r.status === 'fulfilled' ? r.value : []
+      const bluesky = b.status === 'fulfilled' ? b.value : []
+      const rss     = s.status === 'fulfilled' ? s.value : []
+      rawPosts = [...reddit, ...bluesky, ...rss]
+      log.push(`fetched: reddit=${reddit.length} bluesky=${bluesky.length} rss=${rss.length}`)
     }
 
     if (rawPosts.length === 0) {
-      return NextResponse.json({ ok: true, inserted: 0, message: 'No new posts' })
+      return NextResponse.json({ ok: true, inserted: 0, log, message: 'No posts fetched' })
     }
 
+    // 2. Deduplicate
     const postIds = rawPosts.map(p => p.postId)
-    const { data: existing } = await db.from('posts').select('post_id').in('post_id', postIds)
+    log.push(`checking ${postIds.length} ids: ${postIds.slice(0,3).join(', ')}...`)
+
+    const { data: existing, error: selectError } = await db
+      .from('posts').select('post_id').in('post_id', postIds)
+
+    if (selectError) {
+      return NextResponse.json({ error: 'select failed', details: selectError.message, log }, { status: 500 })
+    }
+
     const existingIds = new Set((existing || []).map(r => r.post_id))
     const newPosts = rawPosts.filter(p => !existingIds.has(p.postId))
+    log.push(`existing: ${existingIds.size}, new: ${newPosts.length}`)
 
     if (newPosts.length === 0) {
-      return NextResponse.json({ ok: true, inserted: 0, message: 'All duplicates' })
+      return NextResponse.json({ ok: true, inserted: 0, log, message: 'All duplicates' })
     }
 
+    // 3. Sentiment
     const texts = newPosts.map(p => p.cleanedText || p.content)
     const nlpResults = await analyzeBatch(texts)
 
@@ -66,22 +79,34 @@ export async function GET() {
       }
     })
 
-    const { data: insertData, error: insertError } = await db.from('posts').insert(enriched).select('post_id')
-    if (insertError) return NextResponse.json({ insertError: insertError.message, code: insertError.code, details: insertError.details }, { status: 500 })
-    const actuallyInserted = insertData?.length || 0
+    log.push(`inserting ${enriched.length} posts, first id: ${enriched[0]?.post_id}`)
+
+    // 4. Insert one by one to find which fails
+    let inserted = 0
+    let firstError = null
+    for (const post of enriched) {
+      const { error } = await db.from('posts').insert(post)
+      if (error) {
+        if (!firstError) firstError = error.message
+      } else {
+        inserted++
+      }
+    }
+
+    log.push(`inserted: ${inserted}, firstError: ${firstError}`)
 
     await updateMetrics(db, enriched)
 
     return NextResponse.json({
       ok: true,
-      inserted: enriched.length,
-      sources: enriched.reduce((acc, p) => { acc[p.source] = (acc[p.source] || 0) + 1; return acc }, {}),
+      inserted,
+      firstError,
+      log,
       elapsed_ms: Date.now() - startTime,
     })
 
   } catch (err) {
-    console.error('Trigger error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: err.message, log }, { status: 500 })
   }
 }
 
@@ -106,5 +131,3 @@ async function updateMetrics(db, posts) {
     await db.from('metrics_minutely').insert({ bucket_time: bucket, team_tag: null, post_count: n, positive_count: pos, negative_count: neg, neutral_count: neu, sentiment_score: score })
   }
 }
-
-
