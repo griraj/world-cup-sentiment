@@ -13,13 +13,6 @@ const VIRAL_THRESHOLD = parseInt(process.env.VIRAL_LIKE_THRESHOLD || '200')
 const USE_MOCK = process.env.USE_MOCK_STREAM === 'true'
 
 export async function GET(request) {
-  const authHeader = request.headers.get('authorization')
-  if (
-    process.env.CRON_SECRET &&
-    authHeader !== `Bearer ${process.env.CRON_SECRET}`
-  ) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
 
   const db = getAdminClient()
   const startTime = Date.now()
