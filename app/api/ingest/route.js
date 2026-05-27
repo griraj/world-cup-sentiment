@@ -1,27 +1,18 @@
 // app/api/ingest/route.js
-// ─────────────────────────────────────────────────────────────
-//  Vercel Cron Job endpoint – runs every 60 seconds.
-//
-//  Pipeline:
-//    1. Fetch recent Reddit comments (or mock data)
-//    2. Run HuggingFace sentiment + emotion analysis
-//    3. Upsert posts into Supabase
-//    4. Update per-minute aggregated metrics
-//    5. Run event detection; persist if triggered
-//
-//  Protected by CRON_SECRET so only Vercel cron can call it.
-// ─────────────────────────────────────────────────────────────
+// Pipeline: fetch from Reddit + Bluesky + RSS → sentiment → Supabase
 
 import { NextResponse } from 'next/server'
 import { getAdminClient } from '@/lib/supabase'
 import { fetchRecentPosts } from '@/lib/reddit'
+import { fetchBlueskyPosts } from '@/lib/bluesky'
+import { fetchRSSPosts } from '@/lib/rss'
 import { analyzeBatch } from '@/lib/sentiment'
 import { detectEvent } from '@/lib/eventDetector'
 
 const VIRAL_THRESHOLD = parseInt(process.env.VIRAL_LIKE_THRESHOLD || '200')
+const USE_MOCK = process.env.USE_MOCK_STREAM === 'true'
 
 export async function GET(request) {
-  // Verify cron secret (Vercel sets this automatically in production)
   const authHeader = request.headers.get('authorization')
   if (
     process.env.CRON_SECRET &&
@@ -34,13 +25,36 @@ export async function GET(request) {
   const startTime = Date.now()
 
   try {
-    // ── 1. Fetch posts ───────────────────────────────────────
-    const rawPosts = await fetchRecentPosts(20)
+    // ── 1. Fetch from all sources ────────────────────────────
+    let rawPosts = []
+
+    if (USE_MOCK) {
+      rawPosts = await fetchRecentPosts(20)
+    } else {
+      const [redditPosts, blueskyPosts, rssPosts] = await Promise.allSettled([
+        fetchRecentPosts(15),
+        fetchBlueskyPosts(10),
+        fetchRSSPosts(10),
+      ])
+
+      rawPosts = [
+        ...(redditPosts.status  === 'fulfilled' ? redditPosts.value  : []),
+        ...(blueskyPosts.status === 'fulfilled' ? blueskyPosts.value : []),
+        ...(rssPosts.status     === 'fulfilled' ? rssPosts.value     : []),
+      ]
+
+      console.log(
+        `Fetched: ${redditPosts.value?.length ?? 0} Reddit, ` +
+        `${blueskyPosts.value?.length ?? 0} Bluesky, ` +
+        `${rssPosts.value?.length ?? 0} RSS`
+      )
+    }
+
     if (rawPosts.length === 0) {
       return NextResponse.json({ ok: true, inserted: 0, message: 'No new posts' })
     }
 
-    // ── 2. Check for duplicates ──────────────────────────────
+    // ── 2. Deduplicate ───────────────────────────────────────
     const postIds = rawPosts.map(p => p.postId)
     const { data: existing } = await db
       .from('posts')
@@ -76,22 +90,24 @@ export async function GET(request) {
       }
     })
 
-    // ── 4. Insert posts ──────────────────────────────────────
+    // ── 4. Insert ────────────────────────────────────────────
     const { error: insertError } = await db.from('posts').insert(enriched)
-    if (insertError) {
-      console.error('Post insert error:', insertError.message)
-    }
+    if (insertError) console.error('Post insert error:', insertError.message)
 
-    // ── 5. Update per-minute metrics ─────────────────────────
+    // ── 5. Metrics + event detection ─────────────────────────
     await updateMetrics(db, enriched)
-
-    // ── 6. Event detection ───────────────────────────────────
     await runEventDetection(db, enriched)
 
     const elapsed = Date.now() - startTime
+    const sourceBreakdown = enriched.reduce((acc, p) => {
+      acc[p.source] = (acc[p.source] || 0) + 1
+      return acc
+    }, {})
+
     return NextResponse.json({
       ok: true,
       inserted: enriched.length,
+      sources: sourceBreakdown,
       elapsed_ms: elapsed,
     })
 
@@ -101,14 +117,13 @@ export async function GET(request) {
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
-
 async function updateMetrics(db, posts) {
   const now = new Date()
-  const bucket = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
-    now.getHours(), now.getMinutes(), 0, 0).toISOString()
+  const bucket = new Date(
+    now.getFullYear(), now.getMonth(), now.getDate(),
+    now.getHours(), now.getMinutes(), 0, 0
+  ).toISOString()
 
-  // Count by team + overall
   const groups = { '__ALL__': [] }
   for (const p of posts) {
     if (p.team_tag) {
@@ -125,7 +140,6 @@ async function updateMetrics(db, posts) {
     const neu = teamPosts.filter(p => p.sentiment === 'NEUTRAL').length
     const score = (pos - neg) / Math.max(n, 1)
 
-    // Upsert: increment existing bucket row
     const { data: existing } = await db
       .from('metrics_minutely')
       .select('*')
@@ -135,10 +149,10 @@ async function updateMetrics(db, posts) {
 
     if (existing) {
       await db.from('metrics_minutely').update({
-        post_count:     (existing.post_count || 0) + n,
-        positive_count: (existing.positive_count || 0) + pos,
-        negative_count: (existing.negative_count || 0) + neg,
-        neutral_count:  (existing.neutral_count || 0) + neu,
+        post_count:      (existing.post_count || 0) + n,
+        positive_count:  (existing.positive_count || 0) + pos,
+        negative_count:  (existing.negative_count || 0) + neg,
+        neutral_count:   (existing.neutral_count || 0) + neu,
         sentiment_score: score,
       }).eq('id', existing.id)
     } else {
@@ -156,7 +170,6 @@ async function updateMetrics(db, posts) {
 }
 
 async function runEventDetection(db, currentPosts) {
-  // Get average volume from last 10 minutes
   const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
   const { data: recentMetrics } = await db
     .from('metrics_minutely')
@@ -168,7 +181,6 @@ async function runEventDetection(db, currentPosts) {
     ? recentMetrics.reduce((s, r) => s + (r.post_count || 0), 0) / recentMetrics.length
     : 0
 
-  // Get previous sentiment score
   const { data: prevMetric } = await db
     .from('metrics_minutely')
     .select('sentiment_score')
@@ -178,7 +190,6 @@ async function runEventDetection(db, currentPosts) {
 
   const previousScore = prevMetric?.length > 1 ? prevMetric[1].sentiment_score : null
 
-  // Check cooldown (no events in last 45s)
   const cooldownAgo = new Date(Date.now() - 45 * 1000).toISOString()
   const { data: recentEvent } = await db
     .from('match_events')
@@ -186,7 +197,7 @@ async function runEventDetection(db, currentPosts) {
     .gte('detected_at', cooldownAgo)
     .limit(1)
 
-  if (recentEvent?.length) return // still in cooldown
+  if (recentEvent?.length) return
 
   const event = detectEvent(currentPosts, avgVolume, previousScore)
   if (event) {
@@ -198,6 +209,5 @@ async function runEventDetection(db, currentPosts) {
       description:     event.description,
       detected_at:     new Date().toISOString(),
     })
-    console.log('Event detected:', event.eventType, event.description)
   }
 }
