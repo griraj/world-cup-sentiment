@@ -1,16 +1,7 @@
 {
-  "crons": [
-    {
-      "path": "/api/ingest",
-      "schedule": "* * * * *"
-    }
-  ],
   "functions": {
-    "app/api/ingest/route.js": {
-      "maxDuration": 30
-    },
-    "app/api/stats/route.js": {
-      "maxDuration": 10
-    }
+    "app/api/ingest/route.js": { "maxDuration": 30 },
+    "app/api/stats/route.js": { "maxDuration": 10 },
+    "app/api/trigger/route.js": { "maxDuration": 35 }
   }
 }
