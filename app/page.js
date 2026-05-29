@@ -217,20 +217,16 @@ export default function Dashboard() {
   const [loading, setLoading]       = useState(true)
   const intervalRef = useRef(null)
 
-  // ── Fetch stats + trigger ingest ──────────────────────────
   const fetchStats = useCallback(async () => {
+    fetch('/api/trigger').catch(() => {})
     try {
-      // Trigger ingest (fetches Reddit/Bluesky/RSS → saves to Supabase)
-      fetch('/api/trigger').catch(() => {})
-
-      // Fetch fresh dashboard data
       const res = await fetch('/api/stats')
-      if (!res.ok) throw new Error('Stats fetch failed')
+      if (!res.ok) return
       const json = await res.json()
       setData(json)
       setLoading(false)
     } catch (e) {
-      console.error(e)
+      console.error('stats fetch failed:', e.message)
     }
   }, [])
 
