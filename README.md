@@ -1,266 +1,97 @@
-# ⚽ World Cup Sentiment Tracker
+# World Cup Sentiment Tracker
 
-A production-grade real-time fan sentiment analytics platform for World Cup matches.
-Ingests live tweets, runs NLP sentiment analysis, detects match events, and visualizes
-emotional momentum on a live Plotly Dash dashboard.
+A real-time sentiment dashboard that tracks what football fans are saying during World Cup matches. It pulls comments from Reddit, Bluesky, and RSS news feeds, runs them through sentiment analysis, and displays the results on a live dashboard.
 
----
+## What it does
 
-## 🖥️ Dashboard Preview
+- Fetches posts from Reddit (r/soccer, r/worldcup), Bluesky, and BBC/Sky Sports/ESPN RSS feeds
+- Classifies each post as positive, negative, or neutral using a HuggingFace NLP model
+- Detects match events like goals and red cards based on sudden spikes in volume and sentiment
+- Shows a live dashboard with a sentiment timeline, crowd momentum gauge, team comparison chart, and trending words
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  ⚽ WORLD CUP SENTIMENT                              ● LIVE   UTC 20:14:33 │
-├──────┬──────┬──────┬──────┬──────┬──────────────────────────────────────── │
-│Total │/min  │Pos%  │Neg%  │Mood  │Viral                                    │
-│12,8k │ 42.5 │ 61%  │ 21%  │+0.40 │ 38                                      │
-├──────┴──────┴──────┴──────┴──────┴──────────────────────────────────────── │
-│  Sentiment Timeline 📊          │  ⚡ Crowd Momentum                       │
-│  [Live line graph]              │  [Gauge: ELECTRIC 🔥]                    │
-│                                 ├──────────────────────────────────────────│
-│                                 │  🚨 Match Events                         │
-│                                 │  ⚽ GOAL  – Positive spike +0.61         │
-│                                 │  🟥 VAR   – Negative shift -0.38         │
-├──────────────────┬──────────────┴──────────────────────────────────────────│
-│ Tweet Volume 📈  │ Team Sentiment 🏟️ │ Trending Words 💬                  │
-│ [Bar chart]      │ ARG vs BRA vs FRA │ messi neymar goal penalty VAR       │
-├──────────────────┴───────────────────┴──────────────────────────────────── │
-│  🐦 Live Tweet Feed                                                         │
-│  [POS] Messi just nutmegged the entire defense omg 🔥 · @fan_4821 · 94%   │
-│  [NEG] That red card was completely unjustified #VAR · @fan_7332 · 89%    │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+## Tech stack
 
----
+- Next.js 14 on Vercel (frontend and API routes)
+- Supabase (Postgres database)
+- HuggingFace Inference API (sentiment and emotion models)
+- Reddit public JSON API, Bluesky AppView API, BBC/Sky/ESPN RSS
 
-## 🏗️ Architecture
+## Getting started
+
+### 1. Set up Supabase
+
+Create a project at supabase.com, then run the SQL in `supabase/schema.sql` in the SQL editor. Grab your project URL, anon key, and service role key from Settings > API.
+
+### 2. Deploy to Vercel
+
+Push the repo to GitHub, then import it on vercel.com. Add these environment variables:
 
 ```
-Twitter Stream / Mock Generator
-        │
-        ▼
- ┌─────────────┐
- │ Tweet Queue  │  (in-process, bounded)
- └──────┬──────┘
-        │  batch
-        ▼
- ┌─────────────────────┐
- │  Sentiment Analyzer  │  (HuggingFace DistilBERT + Emotion model)
- └──────────┬──────────┘
-            │
-       ┌────┴────┐
-       │         │
-       ▼         ▼
- ┌──────────┐  ┌─────────────────┐
- │ Database  │  │  Event Detector  │
- │ (SQLite / │  │  (sliding window │
- │ Postgres) │  │   spike detect)  │
- └──────┬───┘  └────────┬────────┘
-        │               │ persist events
-        └───────┬───────┘
-                ▼
-        Plotly Dash Dashboard
-        (auto-refresh every 3–30s)
+NEXT_PUBLIC_SUPABASE_URL      your Supabase project URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY your anon key
+SUPABASE_SERVICE_ROLE_KEY     your service role key
+USE_MOCK_STREAM               true (use false for live data)
+CRON_SECRET                   any random string
 ```
 
----
-
-## 📁 Project Structure
+Optional variables for live data:
 
 ```
-world_cup_sentiment/
-├── app.py                          # Entry point
-├── requirements.txt
-├── .env.example                    # Template for secrets
-├── Dockerfile
-├── docker-compose.yml
-│
-├── backend/
-│   ├── db/
-│   │   └── models.py               # SQLAlchemy models (tweets, events, metrics)
-│   ├── streaming/
-│   │   └── stream.py               # Tweepy v2 stream + MockStreamManager
-│   ├── sentiment/
-│   │   └── analyzer.py             # HuggingFace sentiment + emotion pipeline
-│   ├── events/
-│   │   └── detector.py             # Sliding-window event detection
-│   ├── pipeline.py                 # Orchestrator (queue + threads + DB)
-│   └── dashboard_data.py           # Dashboard query layer
-│
-├── frontend/
-│   └── dashboard.py                # Full Plotly Dash app + all callbacks
-│
-├── utils/
-│   └── text_cleaner.py             # Tweet cleaning, spam filter, team tagging
-│
-├── tests/
-│   └── test_pipeline.py            # pytest test suite
-│
-└── data/                           # Auto-created at runtime
-    ├── sentiment.db                # SQLite database
-    └── app.log                     # Application log
+REDDIT_CLIENT_ID       from reddit.com/prefs/apps
+REDDIT_CLIENT_SECRET   from reddit.com/prefs/apps
+HF_API_TOKEN           from huggingface.co/settings/tokens
 ```
 
----
-
-## 🚀 Quick Start
-
-### Option A: Local (no Docker)
+### 3. Run locally
 
 ```bash
-# 1. Clone and enter project
-git clone https://github.com/you/world-cup-sentiment.git
-cd world_cup_sentiment
-
-# 2. Create virtual environment
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Configure environment
-cp .env.example .env
-# Edit .env – for demo mode, USE_MOCK_STREAM=true (no API key needed)
-
-# 5. Run!
-python app.py
+cp .env.example .env.local
+npm install
+npm run dev
 ```
 
-Open **http://localhost:8050** in your browser.
-
----
-
-### Option B: Docker (recommended)
+Open http://localhost:3000. To test the ingest pipeline manually, run:
 
 ```bash
-# 1. Build and start
-docker-compose up --build
-
-# 2. Open dashboard
-open http://localhost:8050
+curl http://localhost:3000/api/trigger
 ```
 
----
+## Project structure
 
-### Option C: Live Twitter stream
-
-1. Apply for a Twitter Developer account at https://developer.twitter.com
-2. Create a project and app with **Filtered Stream** access
-3. Copy your Bearer Token into `.env`:
-   ```
-   TWITTER_BEARER_TOKEN=AAAAAAAAAAAAAAAAAAAAAfoo...
-   USE_MOCK_STREAM=false
-   ```
-4. Run `python app.py`
-
----
-
-## ⚙️ Configuration
-
-All settings live in `.env` (see `.env.example`):
-
-| Variable | Default | Description |
-|---|---|---|
-| `USE_MOCK_STREAM` | `true` | Use synthetic tweets (no API key) |
-| `TWITTER_BEARER_TOKEN` | — | Twitter v2 Bearer Token |
-| `SENTIMENT_MODEL` | `distilbert-base-uncased-finetuned-sst-2-english` | HuggingFace model |
-| `EMOTION_MODEL` | `j-hartmann/emotion-english-distilroberta-base` | Emotion classifier |
-| `DATABASE_URL` | `sqlite:///./data/sentiment.db` | SQLAlchemy DB URL |
-| `PIPELINE_BATCH_SIZE` | `16` | Tweets per inference batch |
-| `FLUSH_INTERVAL_SECONDS` | `2.0` | DB write interval |
-| `VIRAL_LIKE_THRESHOLD` | `200` | Min likes to flag viral |
-| `PORT` | `8050` | Dashboard port |
-
----
-
-## 🧪 Running Tests
-
-```bash
-pytest tests/ -v
+```
+app/
+  page.js                 dashboard UI
+  api/
+    trigger/route.js      called by the browser to fetch and save new posts
+    ingest/route.js       called by Vercel cron (daily on free plan)
+    stats/route.js        returns all dashboard data in one request
+lib/
+  reddit.js               fetches posts from Reddit
+  bluesky.js              fetches posts from Bluesky
+  rss.js                  fetches headlines from RSS feeds
+  sentiment.js            runs NLP analysis via HuggingFace
+  eventDetector.js        detects goals and red cards from sentiment patterns
+  supabase.js             database client setup
+  utils.js                text cleaning and team detection
+supabase/
+  schema.sql              database schema
 ```
 
----
+## How the data pipeline works
 
-## 🌐 Deployment
+Every time the dashboard loads, it calls /api/trigger, which does the following:
 
-### Render / Railway
+1. Fetches posts from Reddit, Bluesky, and RSS in parallel
+2. Filters out duplicates already in the database
+3. Sends each post through sentiment and emotion classification
+4. Saves the results to Supabase
+5. Updates per-minute aggregate metrics
+6. Checks for match events based on volume and sentiment patterns
 
-```bash
-# Set environment variables in Render/Railway dashboard
-# Start command:
-gunicorn app:server -w 2 -b 0.0.0.0:$PORT
-```
+The dashboard then calls /api/stats to get the latest data and re-renders.
 
-### AWS / DigitalOcean (Docker)
+## Notes on the free tier
 
-```bash
-docker build -t worldcup-sentiment .
-docker run -p 8050:8050 --env-file .env worldcup-sentiment
-```
+Reddit and Bluesky are free with no limits for public data. The HuggingFace free tier allows around 30,000 characters per month, after which the API returns errors and the system falls back to a keyword-based mock classifier. Supabase free tier supports 500MB storage and 50,000 rows, which is more than enough for a tournament.
 
-### Kubernetes (bonus)
-
-See `docker-compose.yml` for service definitions.
-Adapt to K8s Deployments + Services + PersistentVolumeClaim for `/app/data`.
-
----
-
-## 🔧 Extending the App
-
-### Switch to PostgreSQL
-
-```bash
-# In .env:
-DATABASE_URL=postgresql://user:pass@host:5432/worldcup
-```
-
-### Add a new NLP model
-
-```python
-# In backend/sentiment/analyzer.py, change:
-SENTIMENT_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
-```
-
-### Add Kafka streaming (bonus)
-
-Install `confluent-kafka` and replace `MockStreamManager` with a Kafka consumer
-that writes to the same `tweet_queue`.
-
----
-
-## 📊 Database Schema
-
-### `tweets`
-| Column | Type | Description |
-|---|---|---|
-| `tweet_id` | VARCHAR | Unique tweet ID |
-| `text` | TEXT | Raw tweet text |
-| `cleaned_text` | TEXT | Cleaned for NLP |
-| `created_at` | DATETIME | Tweet timestamp |
-| `sentiment` | VARCHAR | POSITIVE/NEGATIVE/NEUTRAL |
-| `confidence` | FLOAT | Model confidence score |
-| `emotion` | VARCHAR | joy/anger/surprise/etc. |
-| `team_tag` | VARCHAR | Detected team |
-| `is_viral` | INT | 1 if likes ≥ threshold |
-
-### `events`
-| Column | Type | Description |
-|---|---|---|
-| `event_type` | VARCHAR | GOAL/RED_CARD/SPIKE/etc. |
-| `timestamp` | DATETIME | Detection time |
-| `sentiment_shift` | FLOAT | Delta in sentiment score |
-| `tweet_volume` | INT | Tweets in detection window |
-
-### `aggregated_metrics`
-Per-minute bucketed stats for fast dashboard queries.
-
----
-
-## 📜 License
-
-MIT License. Build freely, deploy proudly.
-
----
-
-*Built with ❤️ for football fans worldwide.*
+If USE_MOCK_STREAM is true, the app generates fake posts instead of fetching real ones. This is useful for testing without credentials.

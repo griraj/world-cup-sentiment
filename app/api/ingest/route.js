@@ -1,6 +1,3 @@
-// app/api/ingest/route.js
-// Pipeline: fetch from Reddit + Bluesky + RSS → sentiment → Supabase
-
 import { NextResponse } from 'next/server'
 import { getAdminClient } from '@/lib/supabase'
 import { fetchRecentPosts } from '@/lib/reddit'
@@ -13,108 +10,90 @@ const VIRAL_THRESHOLD = parseInt(process.env.VIRAL_LIKE_THRESHOLD || '200')
 const USE_MOCK = process.env.USE_MOCK_STREAM === 'true'
 
 export async function GET(request) {
-  const authHeader = request.headers.get('authorization')
-  if (
-    process.env.CRON_SECRET &&
-    authHeader !== `Bearer ${process.env.CRON_SECRET}`
-  ) {
+  const auth = request.headers.get('authorization')
+  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const db = getAdminClient()
-  const startTime = Date.now()
+  const start = Date.now()
 
   try {
-    // ── 1. Fetch from all sources ────────────────────────────
-    let rawPosts = []
-
-    if (USE_MOCK) {
-      rawPosts = await fetchRecentPosts(20)
-    } else {
-      const [redditPosts, blueskyPosts, rssPosts] = await Promise.allSettled([
-        fetchRecentPosts(15),
-        fetchBlueskyPosts(10),
-        fetchRSSPosts(10),
-      ])
-
-      rawPosts = [
-        ...(redditPosts.status  === 'fulfilled' ? redditPosts.value  : []),
-        ...(blueskyPosts.status === 'fulfilled' ? blueskyPosts.value : []),
-        ...(rssPosts.status     === 'fulfilled' ? rssPosts.value     : []),
-      ]
-
-      console.log(
-        `Fetched: ${redditPosts.value?.length ?? 0} Reddit, ` +
-        `${blueskyPosts.value?.length ?? 0} Bluesky, ` +
-        `${rssPosts.value?.length ?? 0} RSS`
-      )
-    }
-
+    const rawPosts = await getPosts()
     if (rawPosts.length === 0) {
-      return NextResponse.json({ ok: true, inserted: 0, message: 'No new posts' })
+      return NextResponse.json({ ok: true, inserted: 0 })
     }
 
-    // ── 2. Deduplicate ───────────────────────────────────────
-    const postIds = rawPosts.map(p => p.postId)
-    const { data: existing } = await db
-      .from('posts')
-      .select('post_id')
-      .in('post_id', postIds)
-
-    const existingIds = new Set((existing || []).map(r => r.post_id))
-    const newPosts = rawPosts.filter(p => !existingIds.has(p.postId))
-
+    const newPosts = await dedup(db, rawPosts)
     if (newPosts.length === 0) {
-      return NextResponse.json({ ok: true, inserted: 0, message: 'All duplicates' })
+      return NextResponse.json({ ok: true, inserted: 0, message: 'all duplicates' })
     }
 
-    // ── 3. Sentiment analysis ────────────────────────────────
-    const texts = newPosts.map(p => p.cleanedText || p.content)
-    const nlpResults = await analyzeBatch(texts)
-
-    const enriched = newPosts.map((post, i) => {
-      const nlp = nlpResults[i] || { sentiment: 'NEUTRAL', confidence: 0.5 }
-      return {
-        post_id:      post.postId,
-        username:     post.username,
-        content:      post.content,
-        cleaned_text: post.cleanedText,
-        sentiment:    nlp.sentiment,
-        confidence:   nlp.confidence,
-        emotion:      nlp.emotion || null,
-        team_tag:     post.teamTag || null,
-        source:       post.source,
-        like_count:   post.likeCount || 0,
-        is_viral:     (post.likeCount || 0) >= VIRAL_THRESHOLD,
-        created_at:   new Date().toISOString(),
-      }
-    })
-
-    // ── 4. Insert ────────────────────────────────────────────
-    const { error: insertError } = await db.from('posts').insert(enriched)
-    if (insertError) console.error('Post insert error:', insertError.message)
-
-    // ── 5. Metrics + event detection ─────────────────────────
+    const enriched = await enrich(newPosts)
+    await insert(db, enriched)
     await updateMetrics(db, enriched)
-    await runEventDetection(db, enriched)
-
-    const elapsed = Date.now() - startTime
-    const sourceBreakdown = enriched.reduce((acc, p) => {
-      acc[p.source] = (acc[p.source] || 0) + 1
-      return acc
-    }, {})
+    await checkForEvent(db, enriched)
 
     return NextResponse.json({
       ok: true,
       inserted: enriched.length,
-      sources: sourceBreakdown,
-      elapsed_ms: elapsed,
+      elapsed_ms: Date.now() - start,
     })
-
   } catch (err) {
     console.error('Ingest error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
+}
+
+async function getPosts() {
+  if (USE_MOCK) return fetchRecentPosts(20)
+
+  const [reddit, bluesky, rss] = await Promise.allSettled([
+    fetchRecentPosts(15),
+    fetchBlueskyPosts(10),
+    fetchRSSPosts(10),
+  ])
+
+  return [
+    ...(reddit.status === 'fulfilled' ? reddit.value : []),
+    ...(bluesky.status === 'fulfilled' ? bluesky.value : []),
+    ...(rss.status === 'fulfilled' ? rss.value : []),
+  ]
+}
+
+async function dedup(db, posts) {
+  const ids = posts.map(p => p.postId)
+  const { data } = await db.from('posts').select('post_id').in('post_id', ids)
+  const existing = new Set((data || []).map(r => r.post_id))
+  return posts.filter(p => !existing.has(p.postId))
+}
+
+async function enrich(posts) {
+  const texts = posts.map(p => p.cleanedText || p.content)
+  const nlp = await analyzeBatch(texts)
+
+  return posts.map((post, i) => {
+    const result = nlp[i] || { sentiment: 'NEUTRAL', confidence: 0.5 }
+    return {
+      post_id: post.postId,
+      username: post.username,
+      content: post.content,
+      cleaned_text: post.cleanedText,
+      sentiment: result.sentiment,
+      confidence: result.confidence,
+      emotion: result.emotion || null,
+      team_tag: post.teamTag || null,
+      source: post.source,
+      like_count: post.likeCount || 0,
+      is_viral: (post.likeCount || 0) >= VIRAL_THRESHOLD,
+      created_at: new Date().toISOString(),
+    }
+  })
+}
+
+async function insert(db, posts) {
+  const { error } = await db.from('posts').insert(posts)
+  if (error) console.error('Insert error:', error.message)
 }
 
 async function updateMetrics(db, posts) {
@@ -124,90 +103,91 @@ async function updateMetrics(db, posts) {
     now.getHours(), now.getMinutes(), 0, 0
   ).toISOString()
 
-  const groups = { '__ALL__': [] }
+  const groups = { __ALL__: [] }
   for (const p of posts) {
     if (p.team_tag) {
       if (!groups[p.team_tag]) groups[p.team_tag] = []
       groups[p.team_tag].push(p)
     }
-    groups['__ALL__'].push(p)
+    groups.__ALL__.push(p)
   }
 
-  for (const [team, teamPosts] of Object.entries(groups)) {
-    const n   = teamPosts.length
-    const pos = teamPosts.filter(p => p.sentiment === 'POSITIVE').length
-    const neg = teamPosts.filter(p => p.sentiment === 'NEGATIVE').length
-    const neu = teamPosts.filter(p => p.sentiment === 'NEUTRAL').length
+  for (const [team, group] of Object.entries(groups)) {
+    const n = group.length
+    const pos = group.filter(p => p.sentiment === 'POSITIVE').length
+    const neg = group.filter(p => p.sentiment === 'NEGATIVE').length
+    const neu = group.filter(p => p.sentiment === 'NEUTRAL').length
     const score = (pos - neg) / Math.max(n, 1)
+    const teamTag = team === '__ALL__' ? null : team
 
     const { data: existing } = await db
       .from('metrics_minutely')
       .select('*')
       .eq('bucket_time', bucket)
-      .eq('team_tag', team === '__ALL__' ? null : team)
+      .eq('team_tag', teamTag)
       .maybeSingle()
 
     if (existing) {
       await db.from('metrics_minutely').update({
-        post_count:      (existing.post_count || 0) + n,
-        positive_count:  (existing.positive_count || 0) + pos,
-        negative_count:  (existing.negative_count || 0) + neg,
-        neutral_count:   (existing.neutral_count || 0) + neu,
+        post_count: (existing.post_count || 0) + n,
+        positive_count: (existing.positive_count || 0) + pos,
+        negative_count: (existing.negative_count || 0) + neg,
+        neutral_count: (existing.neutral_count || 0) + neu,
         sentiment_score: score,
       }).eq('id', existing.id)
     } else {
       await db.from('metrics_minutely').insert({
-        bucket_time:    bucket,
-        team_tag:       team === '__ALL__' ? null : team,
-        post_count:     n,
+        bucket_time: bucket,
+        team_tag: teamTag,
+        post_count: n,
         positive_count: pos,
         negative_count: neg,
-        neutral_count:  neu,
+        neutral_count: neu,
         sentiment_score: score,
       })
     }
   }
 }
 
-async function runEventDetection(db, currentPosts) {
+async function checkForEvent(db, posts) {
   const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-  const { data: recentMetrics } = await db
+  const { data: recent } = await db
     .from('metrics_minutely')
     .select('post_count')
     .gte('bucket_time', tenMinAgo)
     .is('team_tag', null)
 
-  const avgVolume = recentMetrics?.length
-    ? recentMetrics.reduce((s, r) => s + (r.post_count || 0), 0) / recentMetrics.length
+  const avgVolume = recent?.length
+    ? recent.reduce((s, r) => s + (r.post_count || 0), 0) / recent.length
     : 0
 
-  const { data: prevMetric } = await db
+  const { data: prev } = await db
     .from('metrics_minutely')
     .select('sentiment_score')
     .is('team_tag', null)
     .order('bucket_time', { ascending: false })
     .limit(2)
 
-  const previousScore = prevMetric?.length > 1 ? prevMetric[1].sentiment_score : null
+  const prevScore = prev?.length > 1 ? prev[1].sentiment_score : null
 
-  const cooldownAgo = new Date(Date.now() - 45 * 1000).toISOString()
-  const { data: recentEvent } = await db
+  const cooldown = new Date(Date.now() - 45 * 1000).toISOString()
+  const { data: lastEvent } = await db
     .from('match_events')
     .select('id')
-    .gte('detected_at', cooldownAgo)
+    .gte('detected_at', cooldown)
     .limit(1)
 
-  if (recentEvent?.length) return
+  if (lastEvent?.length) return
 
-  const event = detectEvent(currentPosts, avgVolume, previousScore)
+  const event = detectEvent(posts, avgVolume, prevScore)
   if (event) {
     await db.from('match_events').insert({
-      event_type:      event.eventType,
+      event_type: event.eventType,
       sentiment_shift: event.sentimentShift,
-      post_volume:     event.postVolume,
-      team_tag:        event.teamTag,
-      description:     event.description,
-      detected_at:     new Date().toISOString(),
+      post_volume: event.postVolume,
+      team_tag: event.teamTag,
+      description: event.description,
+      detected_at: new Date().toISOString(),
     })
   }
 }
