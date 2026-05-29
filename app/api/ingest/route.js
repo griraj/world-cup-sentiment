@@ -9,6 +9,7 @@ import { detectEvent } from '@/lib/eventDetector'
 const VIRAL_THRESHOLD = parseInt(process.env.VIRAL_LIKE_THRESHOLD || '200')
 const USE_MOCK = process.env.USE_MOCK_STREAM === 'true'
 
+// Handles G E T.
 export async function GET(request) {
   const auth = request.headers.get('authorization')
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -45,6 +46,7 @@ export async function GET(request) {
   }
 }
 
+// Gets Posts.
 async function getPosts() {
   if (USE_MOCK) return fetchRecentPosts(20)
 
@@ -61,6 +63,7 @@ async function getPosts() {
   ]
 }
 
+// Handles dedup.
 async function dedup(db, posts) {
   const ids = posts.map(p => p.postId)
   const { data } = await db.from('posts').select('post_id').in('post_id', ids)
@@ -68,6 +71,7 @@ async function dedup(db, posts) {
   return posts.filter(p => !existing.has(p.postId))
 }
 
+// Handles enrich.
 async function enrich(posts) {
   const texts = posts.map(p => p.cleanedText || p.content)
   const nlp = await analyzeBatch(texts)
@@ -91,11 +95,13 @@ async function enrich(posts) {
   })
 }
 
+// Handles insert.
 async function insert(db, posts) {
   const { error } = await db.from('posts').insert(posts)
   if (error) console.error('Insert error:', error.message)
 }
 
+// Updates Metrics.
 async function updateMetrics(db, posts) {
   const now = new Date()
   const bucket = new Date(
@@ -149,6 +155,7 @@ async function updateMetrics(db, posts) {
   }
 }
 
+// Checks For Event.
 async function checkForEvent(db, posts) {
   const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
   const { data: recent } = await db

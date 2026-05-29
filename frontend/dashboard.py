@@ -1,9 +1,4 @@
-"""
-World Cup Sentiment Tracker – Plotly Dash Dashboard
 
-Dark-mode, real-time sports analytics dashboard.
-All live updates driven by dcc.Interval callbacks.
-"""
 
 import logging
 from datetime import datetime
@@ -27,9 +22,6 @@ from backend.dashboard_data import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Color palette & theme
-# ---------------------------------------------------------------------------
 COLORS = {
     "bg":         "#0a0e1a",
     "surface":    "#111827",
@@ -101,10 +93,7 @@ EVENT_ICON = {
     "NEGATIVE_SHIFT":   "😠",
 }
 
-# ---------------------------------------------------------------------------
-# Reusable component builders
-# ---------------------------------------------------------------------------
-
+# Handles stat card.
 def stat_card(title: str, value: str, subtitle: str = "", color: str = COLORS["accent"]) -> html.Div:
     return html.Div([
         html.P(title, className="stat-label"),
@@ -112,18 +101,14 @@ def stat_card(title: str, value: str, subtitle: str = "", color: str = COLORS["a
         html.P(subtitle, className="stat-sub"),
     ], className="stat-card")
 
-
+# Handles section header.
 def section_header(text: str, icon: str = "") -> html.Div:
     return html.Div([
         html.Span(icon + " " if icon else "", style={"marginRight": "6px"}),
         html.Span(text),
     ], className="section-header")
 
-
-# ---------------------------------------------------------------------------
-# Dash app factory
-# ---------------------------------------------------------------------------
-
+# Creates app.
 def create_app() -> dash.Dash:
     app = dash.Dash(
         __name__,
@@ -133,10 +118,9 @@ def create_app() -> dash.Dash:
     )
 
     app.layout = html.Div([
-        # Fonts
+
         html.Link(rel="stylesheet", href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@700;900&family=Roboto+Mono:wght@400;500&display=swap"),
 
-        # Inline CSS
         html.Style("""
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -252,13 +236,12 @@ def create_app() -> dash.Dash:
         }
         """),
 
-        # ── Refresh intervals ──
-        dcc.Interval(id="interval-fast",  interval=3000,  n_intervals=0),  # 3s
-        dcc.Interval(id="interval-medium",interval=8000,  n_intervals=0),  # 8s
-        dcc.Interval(id="interval-slow",  interval=30000, n_intervals=0),  # 30s
+        dcc.Interval(id="interval-fast",  interval=3000,  n_intervals=0),      
+        dcc.Interval(id="interval-medium",interval=8000,  n_intervals=0),      
+        dcc.Interval(id="interval-slow",  interval=30000, n_intervals=0),       
 
         html.Div([
-            # ── Header ──
+
             html.Div([
                 html.Div("⚽ WORLD CUP SENTIMENT", className="header-title"),
                 html.Div([
@@ -267,18 +250,15 @@ def create_app() -> dash.Dash:
                 ], className="header-right"),
             ], className="header"),
 
-            # ── Stat cards ──
             html.Div(id="stat-cards", className="stats-row"),
 
-            # ── Main charts row ──
             html.Div([
-                # Sentiment timeline
+
                 html.Div([
                     section_header("Sentiment Timeline", "📊"),
                     dcc.Graph(id="sentiment-timeline", config={"displayModeBar": False}, style={"height": "280px"}),
                 ], className="panel"),
 
-                # Momentum + events
                 html.Div([
                     section_header("Crowd Momentum", "⚡"),
                     html.Div(id="momentum-gauge", className="momentum-wrap"),
@@ -288,15 +268,13 @@ def create_app() -> dash.Dash:
                 ], className="panel"),
             ], className="charts-grid"),
 
-            # ── Bottom row ──
             html.Div([
-                # Volume graph
+
                 html.Div([
                     section_header("Tweet Volume / min", "📈"),
                     dcc.Graph(id="volume-graph", config={"displayModeBar": False}, style={"height": "200px"}),
                 ], className="panel"),
 
-                # Team comparison
                 html.Div([
                     section_header("Team Sentiment", "🏟️"),
                     dcc.Dropdown(
@@ -310,14 +288,12 @@ def create_app() -> dash.Dash:
                     dcc.Graph(id="team-comparison", config={"displayModeBar": False}, style={"height": "160px"}),
                 ], className="panel"),
 
-                # Word cloud
                 html.Div([
                     section_header("Trending Words", "💬"),
                     html.Div(id="wordcloud-container"),
                 ], className="panel"),
             ], className="charts-bottom"),
 
-            # ── Live feed ──
             html.Div([
                 section_header("Live Tweet Feed", "🐦"),
                 html.Div(id="live-feed"),
@@ -326,16 +302,13 @@ def create_app() -> dash.Dash:
         ], className="page-wrap"),
     ])
 
-    # ========================================================================
-    # Callbacks
-    # ========================================================================
-
     @app.callback(Output("clock", "children"), Input("interval-fast", "n_intervals"))
+    # Updates clock.
     def update_clock(n):
         return datetime.utcnow().strftime("UTC  %H:%M:%S")
 
-    # ── Stat cards ──
     @app.callback(Output("stat-cards", "children"), Input("interval-fast", "n_intervals"))
+    # Updates stats.
     def update_stats(n):
         s = get_summary_stats(minutes=5)
         return [
@@ -347,28 +320,28 @@ def create_app() -> dash.Dash:
             stat_card("Viral Tweets",   f'{s["viral_tweets"]:,}',            "200+ likes",           COLORS["accent2"]),
         ]
 
-    # ── Sentiment timeline ──
     @app.callback(Output("sentiment-timeline", "figure"), Input("interval-fast", "n_intervals"))
+    # Updates sentiment timeline.
     def update_sentiment_timeline(n):
         df = get_sentiment_timeline(minutes=30)
         fig = go.Figure()
 
         if not df.empty:
-            # Filled area for positive
+
             fig.add_trace(go.Scatter(
                 x=df["bucket_time"], y=df["positive_count"],
                 name="Positive", mode="lines",
                 line=dict(color=COLORS["positive"], width=2),
                 fill="tozeroy", fillcolor="rgba(0,230,118,0.08)",
             ))
-            # Filled area for negative
+
             fig.add_trace(go.Scatter(
                 x=df["bucket_time"], y=df["negative_count"],
                 name="Negative", mode="lines",
                 line=dict(color=COLORS["negative"], width=2),
                 fill="tozeroy", fillcolor="rgba(255,68,68,0.08)",
             ))
-            # Sentiment score on secondary y
+
             fig.add_trace(go.Scatter(
                 x=df["bucket_time"], y=df["sentiment_score"],
                 name="Score", mode="lines",
@@ -376,7 +349,6 @@ def create_app() -> dash.Dash:
                 yaxis="y2",
             ))
 
-            # Annotate events
             events = get_recent_events(limit=5)
             for ev in events:
                 et = ev.get("timestamp")
@@ -406,8 +378,8 @@ def create_app() -> dash.Dash:
         )
         return fig
 
-    # ── Volume graph ──
     @app.callback(Output("volume-graph", "figure"), Input("interval-fast", "n_intervals"))
+    # Updates volume.
     def update_volume(n):
         df = get_volume_timeline(minutes=30)
         fig = go.Figure()
@@ -420,7 +392,7 @@ def create_app() -> dash.Dash:
                 opacity=0.8,
                 name="Tweets/min",
             ))
-            # Spike threshold line
+
             mean_vol = df["tweet_count"].mean()
             spike_threshold = mean_vol * 3
             fig.add_hline(
@@ -434,11 +406,11 @@ def create_app() -> dash.Dash:
         fig.update_layout(**PLOT_LAYOUT)
         return fig
 
-    # ── Team comparison ──
     @app.callback(
         Output("team-comparison", "figure"),
         [Input("interval-medium", "n_intervals"), Input("team-selector", "value")]
     )
+    # Updates team comparison.
     def update_team_comparison(n, selected_teams):
         if not selected_teams:
             return go.Figure(layout=PLOT_LAYOUT)
@@ -463,12 +435,11 @@ def create_app() -> dash.Dash:
         )
         return fig
 
-    # ── Momentum gauge ──
     @app.callback(Output("momentum-gauge", "children"), Input("interval-fast", "n_intervals"))
+    # Updates momentum.
     def update_momentum(n):
         score = get_momentum_score(seconds=30)
 
-        # Determine color
         if score > 0.3:
             color = COLORS["positive"]
             label = "ELECTRIC 🔥"
@@ -522,8 +493,8 @@ def create_app() -> dash.Dash:
             }),
         ]
 
-    # ── Match events ──
     @app.callback(Output("events-list", "children"), Input("interval-medium", "n_intervals"))
+    # Updates events.
     def update_events(n):
         events = get_recent_events(limit=8)
         if not events:
@@ -548,8 +519,8 @@ def create_app() -> dash.Dash:
             ], className="event-item"))
         return items
 
-    # ── Word cloud ──
     @app.callback(Output("wordcloud-container", "children"), Input("interval-slow", "n_intervals"))
+    # Updates wordcloud.
     def update_wordcloud(n):
         freq = get_word_frequencies(minutes=10, top_n=50)
         if not freq:
@@ -576,8 +547,8 @@ def create_app() -> dash.Dash:
             ))
         return items
 
-    # ── Live feed ──
     @app.callback(Output("live-feed", "children"), Input("interval-fast", "n_intervals"))
+    # Updates feed.
     def update_feed(n):
         tweets = get_live_feed(limit=15)
         if not tweets:

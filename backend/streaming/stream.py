@@ -1,13 +1,4 @@
-"""
-Live tweet streaming service using Tweepy v2 Filtered Stream API.
 
-Responsibilities:
-  - Connect to Twitter/X filtered stream
-  - Apply keyword rules for World Cup coverage
-  - Filter retweets, spam, duplicates
-  - Enqueue tweets to a processing queue
-  - Gracefully reconnect on network errors
-"""
 
 import os
 import json
@@ -24,16 +15,12 @@ from utils.text_cleaner import clean_text, is_spam, is_retweet, detect_team_tag
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Twitter API credentials from environment
-# ---------------------------------------------------------------------------
 BEARER_TOKEN     = os.getenv("TWITTER_BEARER_TOKEN", "")
 API_KEY          = os.getenv("TWITTER_API_KEY", "")
 API_SECRET       = os.getenv("TWITTER_API_SECRET", "")
 ACCESS_TOKEN     = os.getenv("TWITTER_ACCESS_TOKEN", "")
 ACCESS_SECRET    = os.getenv("TWITTER_ACCESS_SECRET", "")
 
-# Stream rules: keywords tracked
 STREAM_RULES = [
     tweepy.StreamRule("#WorldCup"),
     tweepy.StreamRule("#FIFAWorldCup"),
@@ -44,78 +31,70 @@ STREAM_RULES = [
     tweepy.StreamRule("#Germany OR #Spain OR #Portugal OR #Morocco"),
 ]
 
-# Expansions and fields we want from the API
 TWEET_FIELDS = ["created_at", "author_id", "lang", "public_metrics", "text"]
 EXPANSIONS   = ["author_id"]
 USER_FIELDS  = ["username"]
 
-
 class WorldCupStream(tweepy.StreamingClient):
-    """
-    Tweepy v2 Streaming client.
-    Validates, cleans, and enqueues tweets for downstream processing.
-    """
+    
 
+    # Initializes __init__.
     def __init__(self, tweet_queue: queue.Queue, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._queue       = tweet_queue
-        self._seen_ids    = set()           # dedup cache
+        self._seen_ids    = set()                        
         self._seen_lock   = threading.Lock()
-        self._max_seen    = 50_000          # ring-buffer cap to avoid unbounded memory
+        self._max_seen    = 50_000                                                     
 
-    # ------------------------------------------------------------------
-    # Tweepy callbacks
-    # ------------------------------------------------------------------
-
+    # Handles on tweet.
     def on_tweet(self, tweet: tweepy.Tweet):
         try:
             self._process(tweet)
         except Exception as e:
             logger.exception("Error processing tweet %s: %s", tweet.id, e)
 
+    # Handles on includes.
     def on_includes(self, includes):
-        # Store user info for username lookup
+
         if "users" in includes:
             self._users = {u.id: u.username for u in includes["users"]}
 
+    # Handles on errors.
     def on_errors(self, errors):
         for err in errors:
             logger.warning("Stream error: %s", err)
 
+    # Handles on connection error.
     def on_connection_error(self):
         logger.error("Stream connection error – Tweepy will retry automatically.")
 
+    # Handles on request error.
     def on_request_error(self, status_code):
         logger.error("HTTP %s on stream request.", status_code)
         if status_code == 429:
             logger.warning("Rate limited – sleeping 60s before reconnect.")
             time.sleep(60)
 
+    # Handles on disconnect.
     def on_disconnect(self):
         logger.warning("Stream disconnected.")
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
+    # Processes _process.
     def _process(self, tweet: tweepy.Tweet):
         text = tweet.text or ""
 
-        # Drop retweets
         if is_retweet(text):
             return
 
-        # Dedup
         tweet_id = str(tweet.id)
         with self._seen_lock:
             if tweet_id in self._seen_ids:
                 return
             self._seen_ids.add(tweet_id)
-            # Evict old ids to keep memory bounded
+
             if len(self._seen_ids) > self._max_seen:
                 self._seen_ids = set(list(self._seen_ids)[-self._max_seen // 2:])
 
-        # Spam filter
         if is_spam(text):
             return
 
@@ -141,19 +120,10 @@ class WorldCupStream(tweepy.StreamingClient):
         except queue.Full:
             logger.warning("Tweet queue full – dropping tweet %s", tweet_id)
 
-
-# ---------------------------------------------------------------------------
-# Stream manager: rule setup + start/stop lifecycle
-# ---------------------------------------------------------------------------
-
 class StreamManager:
-    """
-    Manages the Tweepy stream lifecycle:
-      - Clears/sets stream rules on startup
-      - Starts streaming in a background thread
-      - Provides graceful shutdown
-    """
+    
 
+    # Initializes __init__.
     def __init__(self, tweet_queue: queue.Queue):
         if not BEARER_TOKEN:
             raise EnvironmentError(
@@ -163,23 +133,23 @@ class StreamManager:
         self._stream: Optional[WorldCupStream] = None
         self._thread: Optional[threading.Thread] = None
 
+    # Handles setup rules.
     def setup_rules(self):
-        """Remove old rules and push fresh World Cup rules."""
+        
         client = tweepy.StreamingClient(BEARER_TOKEN)
 
-        # Delete existing rules
         existing = client.get_rules()
         if existing.data:
             ids = [r.id for r in existing.data]
             client.delete_rules(ids)
             logger.info("Deleted %d old stream rules.", len(ids))
 
-        # Add new rules
         client.add_rules(STREAM_RULES)
         logger.info("Added %d stream rules.", len(STREAM_RULES))
 
+    # Starts start.
     def start(self):
-        """Start the stream in a daemon thread."""
+        
         self.setup_rules()
         self._stream = WorldCupStream(
             bearer_token=BEARER_TOKEN,
@@ -195,6 +165,7 @@ class StreamManager:
         self._thread.start()
         logger.info("Tweet stream started.")
 
+    # Runs stream.
     def _run_stream(self):
         while True:
             try:
@@ -207,21 +178,14 @@ class StreamManager:
                 logger.error("Stream crashed: %s – restarting in 15s", e)
                 time.sleep(15)
 
+    # Stops stop.
     def stop(self):
         if self._stream:
             self._stream.disconnect()
         logger.info("Tweet stream stopped.")
 
-
-# ---------------------------------------------------------------------------
-# Mock stream for development / demo (no API key required)
-# ---------------------------------------------------------------------------
-
 class MockStreamManager:
-    """
-    Generates synthetic tweets at a realistic rate for local development.
-    Useful when no Twitter API credentials are available.
-    """
+    
 
     SAMPLE_TWEETS = [
         ("Argentina scores!! GOOOAL MESSI IS INSANE 🔥🔥🔥", "Argentina"),
@@ -246,6 +210,7 @@ class MockStreamManager:
         ("Messi just won the ball back in his own half at 35 years old 😳", "Argentina"),
     ]
 
+    # Initializes __init__.
     def __init__(self, tweet_queue: queue.Queue, delay: float = 0.8):
         self._queue  = tweet_queue
         self._delay  = delay
@@ -253,6 +218,7 @@ class MockStreamManager:
         self._stop   = threading.Event()
         self._counter = 0
 
+    # Starts start.
     def start(self):
         self._thread = threading.Thread(
             target=self._run, name="MockStream", daemon=True
@@ -260,11 +226,12 @@ class MockStreamManager:
         self._thread.start()
         logger.info("Mock tweet stream started (no API key mode).")
 
+    # Runs _run.
     def _run(self):
         import random
         while not self._stop.is_set():
             text, team = random.choice(self.SAMPLE_TWEETS)
-            # Occasionally generate viral tweets
+
             likes = random.randint(0, 50)
             if random.random() < 0.05:
                 likes = random.randint(500, 5000)
@@ -286,12 +253,12 @@ class MockStreamManager:
             except queue.Full:
                 pass
 
-            # Vary the rate: occasional spikes to simulate goals
-            if random.random() < 0.08:  # 8% chance of spike
+            if random.random() < 0.08:                      
                 time.sleep(self._delay * 0.1)
             else:
                 time.sleep(self._delay + random.uniform(-0.2, 0.4))
 
+    # Stops stop.
     def stop(self):
         self._stop.set()
         logger.info("Mock stream stopped.")

@@ -1,9 +1,4 @@
-"""
-Match event detection engine.
 
-Uses sliding-window statistics over tweet volume and sentiment
-to detect real-world match events: goals, red cards, VAR controversies, etc.
-"""
 
 import logging
 from collections import deque
@@ -13,23 +8,18 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-VOLUME_WINDOW_SECONDS   = 60    # baseline window for average volume
-SPIKE_WINDOW_SECONDS    = 10    # short window for spike detection
-VOLUME_SPIKE_MULTIPLIER = 3.0   # tweet rate must be N× baseline to flag
-SENTIMENT_SHIFT_DELTA   = 0.35  # abs change in sentiment score to flag
-COOLDOWN_SECONDS        = 45    # minimum gap between consecutive event detections
-
+VOLUME_WINDOW_SECONDS   = 60                                        
+SPIKE_WINDOW_SECONDS    = 10                                      
+VOLUME_SPIKE_MULTIPLIER = 3.0                                           
+SENTIMENT_SHIFT_DELTA   = 0.35                                         
+COOLDOWN_SECONDS        = 45                                                      
 
 @dataclass
 class TweetSignal:
     timestamp: datetime
-    sentiment: str    # POSITIVE / NEGATIVE / NEUTRAL
+    sentiment: str                                   
     confidence: float
     team_tag: Optional[str]
-
 
 @dataclass
 class DetectedEvent:
@@ -40,50 +30,40 @@ class DetectedEvent:
     team_tag: Optional[str]
     description: str
 
-
 class EventDetector:
-    """
-    Sliding-window event detector.
+    
 
-    Maintains a time-ordered deque of TweetSignals and periodically
-    checks for statistical anomalies that indicate match events.
-    """
-
+    # Initializes __init__.
     def __init__(self):
         self._signals: deque[TweetSignal] = deque()
         self._last_event_time: Optional[datetime] = None
         self._last_sentiment_score: Optional[float] = None
-        self._callbacks: list = []          # callables invoked on event
+        self._callbacks: list = []                                      
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
+    # Handles register callback.
     def register_callback(self, fn):
-        """Register a function(DetectedEvent) called on every detection."""
+        
         self._callbacks.append(fn)
 
+    # Handles ingest.
     def ingest(self, signal: TweetSignal):
-        """Add a new tweet signal and check for events."""
+        
         self._signals.append(signal)
         self._prune()
         self._check()
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
+    # Handles _prune.
     def _prune(self):
-        """Remove signals older than the baseline window."""
+        
         cutoff = datetime.utcnow() - timedelta(seconds=VOLUME_WINDOW_SECONDS)
         while self._signals and self._signals[0].timestamp < cutoff:
             self._signals.popleft()
 
+    # Checks _check.
     def _check(self):
-        """Evaluate current window for event conditions."""
+        
         now = datetime.utcnow()
 
-        # Respect cooldown
         if self._last_event_time and (now - self._last_event_time).seconds < COOLDOWN_SECONDS:
             return
 
@@ -92,10 +72,9 @@ class EventDetector:
         if total < 5:
             return
 
-        # --- Volume spike detection ---
         spike_cutoff = now - timedelta(seconds=SPIKE_WINDOW_SECONDS)
         recent       = [s for s in all_signals if s.timestamp >= spike_cutoff]
-        recent_rate  = len(recent) / SPIKE_WINDOW_SECONDS  # per second
+        recent_rate  = len(recent) / SPIKE_WINDOW_SECONDS              
         baseline_rate= (total - len(recent)) / max(1, VOLUME_WINDOW_SECONDS - SPIKE_WINDOW_SECONDS)
 
         volume_spike = (
@@ -104,7 +83,6 @@ class EventDetector:
             len(recent) >= 5
         )
 
-        # --- Sentiment shift detection ---
         current_score = self._compute_score(all_signals)
         sentiment_shift = 0.0
         if self._last_sentiment_score is not None:
@@ -114,7 +92,6 @@ class EventDetector:
         big_positive_shift = sentiment_shift >  SENTIMENT_SHIFT_DELTA
         big_negative_shift = sentiment_shift < -SENTIMENT_SHIFT_DELTA
 
-        # --- Classify event ---
         event: Optional[DetectedEvent] = None
 
         if volume_spike and big_positive_shift:
@@ -176,11 +153,9 @@ class EventDetector:
                     logger.exception("Event callback error: %s", e)
 
     @staticmethod
+    # Handles compute score.
     def _compute_score(signals: list[TweetSignal]) -> float:
-        """
-        Composite sentiment score in [-1, +1].
-        Weighted by confidence.
-        """
+        
         if not signals:
             return 0.0
         total_weight = 0.0
@@ -198,8 +173,9 @@ class EventDetector:
         return total_score / total_weight if total_weight else 0.0
 
     @staticmethod
+    # Handles dominant team.
     def _dominant_team(signals: list[TweetSignal]) -> Optional[str]:
-        """Return the most-mentioned team among a set of signals."""
+        
         counts: dict[str, int] = {}
         for s in signals:
             if s.team_tag:

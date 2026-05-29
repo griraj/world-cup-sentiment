@@ -8,13 +8,11 @@ import {
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 
-// ── Supabase browser client ───────────────────────────────────
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 )
 
-// ── Design tokens ─────────────────────────────────────────────
 const C = {
   bg:       '#0a0e1a',
   surface:  '#111827',
@@ -44,8 +42,7 @@ const EVENT_ICON = {
 
 const ALL_TEAMS = ['Argentina','Brazil','France','England','Germany','Spain','Portugal','Morocco']
 
-// ── Reusable components ───────────────────────────────────────
-
+// Handles Stat Card.
 function StatCard({ title, value, sub, color = C.accent }) {
   return (
     <div style={{
@@ -60,6 +57,7 @@ function StatCard({ title, value, sub, color = C.accent }) {
   )
 }
 
+// Handles Panel.
 function Panel({ children, style = {} }) {
   return (
     <div style={{
@@ -71,6 +69,7 @@ function Panel({ children, style = {} }) {
   )
 }
 
+// Handles Section Label.
 function SectionLabel({ icon = '', text }) {
   return (
     <p style={{
@@ -89,19 +88,18 @@ const tooltipStyle = {
   itemStyle:    { color: C.text },
 }
 
-// ── Momentum gauge (pure CSS/SVG, no extra lib) ────────────────
-
+// Handles Momentum Gauge.
 function MomentumGauge({ score = 0 }) {
   const clamped = Math.max(-1, Math.min(1, score))
-  const pct = (clamped + 1) / 2  // 0→1
-  const angle = pct * 180 - 90   // -90°..+90°
+  const pct = (clamped + 1) / 2  
+  const angle = pct * 180 - 90   
   const color = clamped > 0.3 ? C.positive : clamped < -0.3 ? C.negative : clamped > 0.1 ? C.accent : clamped < -0.1 ? C.accent2 : C.neutral
   const label = clamped > 0.3 ? 'ELECTRIC 🔥' : clamped > 0.1 ? 'POSITIVE ↑' : clamped < -0.3 ? 'ANGRY 😤' : clamped < -0.1 ? 'NEGATIVE ↓' : 'NEUTRAL ●'
 
   const cx = 100, cy = 90, r = 72
   const toRad = a => (a * Math.PI) / 180
   const arcX = cx + r * Math.cos(toRad(angle - 90 + 90 - 90))
-  // Draw arc from -90° to angle
+
   const startX = cx + r * Math.cos(toRad(-90))
   const startY = cy + r * Math.sin(toRad(-90))
   const endX   = cx + r * Math.cos(toRad(angle))
@@ -111,23 +109,23 @@ function MomentumGauge({ score = 0 }) {
   return (
     <div style={{ textAlign: 'center' }}>
       <svg viewBox="0 0 200 110" width="100%" style={{ maxWidth: 200, display: 'block', margin: '0 auto' }}>
-        {/* Track */}
+        {}
         <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
           fill="none" stroke={C.border} strokeWidth="14" strokeLinecap="round" />
-        {/* Fill */}
+        {}
         {pct > 0 && (
           <path d={`M ${startX} ${startY} A ${r} ${r} 0 ${large} 1 ${endX} ${endY}`}
             fill="none" stroke={color} strokeWidth="14" strokeLinecap="round"
             style={{ filter: `drop-shadow(0 0 6px ${color})` }} />
         )}
-        {/* Needle */}
+        {}
         <line
           x1={cx} y1={cy}
           x2={cx + (r - 10) * Math.cos(toRad(angle))}
           y2={cy + (r - 10) * Math.sin(toRad(angle))}
           stroke={color} strokeWidth="3" strokeLinecap="round" />
         <circle cx={cx} cy={cy} r="5" fill={color} />
-        {/* Score */}
+        {}
         <text x={cx} y={cy + 22} textAnchor="middle"
           fill={color} fontSize="18" fontFamily="Orbitron, sans-serif" fontWeight="700">
           {clamped > 0 ? '+' : ''}{(clamped * 100).toFixed(0)}
@@ -140,8 +138,7 @@ function MomentumGauge({ score = 0 }) {
   )
 }
 
-// ── Word cloud ─────────────────────────────────────────────────
-
+// Handles Word Cloud.
 function WordCloud({ words }) {
   if (!words || Object.keys(words).length === 0) {
     return <p style={{ color: C.textDim, fontSize: '.8rem', textAlign: 'center', padding: '20px 0' }}>Collecting data…</p>
@@ -165,8 +162,7 @@ function WordCloud({ words }) {
   )
 }
 
-// ── Live feed item ─────────────────────────────────────────────
-
+// Handles Feed Item.
 function FeedItem({ post }) {
   const { sentiment, content, username, team_tag, emotion, confidence, is_viral, source } = post
   const badgeColor = sentiment === 'POSITIVE' ? C.positive : sentiment === 'NEGATIVE' ? C.negative : C.neutral
@@ -198,17 +194,11 @@ function FeedItem({ post }) {
   )
 }
 
-// ── Axis formatters ────────────────────────────────────────────
-
 const fmtTime = iso => {
   if (!iso) return ''
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
 }
-
-// ══════════════════════════════════════════════════════════════
-//  Main Dashboard
-// ══════════════════════════════════════════════════════════════
 
 export default function Dashboard() {
   const [data, setData]             = useState(null)
@@ -230,21 +220,17 @@ export default function Dashboard() {
     }
   }, [])
 
-  // ── Supabase Realtime subscription ────────────────────────
   useEffect(() => {
     fetchStats()
 
-    // Poll every 5s (realtime as bonus)
     intervalRef.current = setInterval(fetchStats, 5000)
 
-    // Supabase Realtime: re-fetch on any new post
     const channel = supabase
       .channel('dashboard')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, fetchStats)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'match_events' }, fetchStats)
       .subscribe()
 
-    // Clock
     const clockInterval = setInterval(() => {
       setClock(new Date().toUTCString().slice(17, 25))
     }, 1000)
@@ -256,14 +242,13 @@ export default function Dashboard() {
     }
   }, [fetchStats])
 
-  // ── Toggle team selection ──────────────────────────────────
   const toggleTeam = team => setSelected(prev =>
     prev.includes(team) ? prev.filter(t => t !== team) : [...prev, team]
   )
 
   const { timeline = [], volume = [], teams = [], feed = [], events = [], words = {}, momentum = 0, stats = {} } = data || {}
 
-  // Filter team data
+  // Handles team Data.
   const teamData = (() => {
     if (!teams.length) return []
     const map = {}
@@ -275,10 +260,9 @@ export default function Dashboard() {
     return Object.values(map)
   })()
 
-  // Mean volume for spike line
   const meanVolume = volume.length ? volume.reduce((s, r) => s + (r.post_count || 0), 0) / volume.length : 0
 
-  // ── Styles ────────────────────────────────────────────────
+  // Handles grid Style.
   const gridStyle = (cols) => ({
     display: 'grid',
     gridTemplateColumns: cols,
@@ -296,7 +280,7 @@ export default function Dashboard() {
 
   return (
     <div style={{ background: C.bg, minHeight: '100vh', color: C.text, fontFamily: "'Rajdhani', sans-serif" }}>
-      {/* ── Google Fonts ── */}
+      {}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@700;900&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -309,7 +293,7 @@ export default function Dashboard() {
 
       <div style={{ maxWidth: 1560, margin: '0 auto', padding: '14px 18px' }}>
 
-        {/* ── Header ── */}
+        {}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           background: 'linear-gradient(90deg, #0d1525, #111827)',
@@ -333,7 +317,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ── Stat cards ── */}
+        {}
         <div style={gridStyle('repeat(6, 1fr)')}>
           <StatCard title="Total Posts"   value={(stats.totalPosts || 0).toLocaleString()} sub="all time"           color={C.accent}   />
           <StatCard title="Per Minute"    value={stats.postsPerMin || 0}                   sub="last 5 min"        color={C.purple}   />
@@ -343,9 +327,9 @@ export default function Dashboard() {
           <StatCard title="Viral Posts"   value={(stats.viralPosts || 0).toLocaleString()} sub="200+ likes"        color={C.accent2}  />
         </div>
 
-        {/* ── Main row ── */}
+        {}
         <div style={gridStyle('2fr 1fr')}>
-          {/* Sentiment Timeline */}
+          {}
           <Panel>
             <SectionLabel icon="📊" text="Sentiment Timeline – Last 30 min" />
             <ResponsiveContainer width="100%" height={270}>
@@ -377,7 +361,7 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </Panel>
 
-          {/* Momentum + Events */}
+          {}
           <Panel>
             <SectionLabel icon="⚡" text="Crowd Momentum" />
             <MomentumGauge score={momentum} />
@@ -407,9 +391,9 @@ export default function Dashboard() {
           </Panel>
         </div>
 
-        {/* ── Bottom row ── */}
+        {}
         <div style={gridStyle('1fr 1fr 1fr')}>
-          {/* Volume */}
+          {}
           <Panel>
             <SectionLabel icon="📈" text="Post Volume / min" />
             <ResponsiveContainer width="100%" height={180}>
@@ -427,7 +411,7 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </Panel>
 
-          {/* Team comparison */}
+          {}
           <Panel>
             <SectionLabel icon="🏟️" text="Team Sentiment" />
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
@@ -455,14 +439,14 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </Panel>
 
-          {/* Word cloud */}
+          {}
           <Panel>
             <SectionLabel icon="💬" text="Trending Words" />
             <WordCloud words={words} />
           </Panel>
         </div>
 
-        {/* ── Live feed ── */}
+        {}
         <Panel>
           <SectionLabel icon="🔴" text="Live Comment Feed" />
           <div>

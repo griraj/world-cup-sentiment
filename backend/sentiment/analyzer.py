@@ -1,12 +1,4 @@
-"""
-Sentiment analysis service using HuggingFace Transformers.
 
-Supports:
-  - Sentiment classification (POSITIVE / NEGATIVE / NEUTRAL)
-  - Emotion detection (joy, anger, surprise, disappointment, excitement)
-  - Batch inference for throughput
-  - Easy model hot-swap via env var
-"""
 
 import os
 import logging
@@ -16,9 +8,6 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 SENTIMENT_MODEL = os.getenv(
     "SENTIMENT_MODEL",
     "distilbert-base-uncased-finetuned-sst-2-english"
@@ -30,22 +19,18 @@ EMOTION_MODEL = os.getenv(
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "32"))
 MAX_LENGTH = int(os.getenv("MAX_TOKEN_LENGTH", "128"))
 
-
 @dataclass
 class SentimentResult:
-    sentiment: str          # POSITIVE / NEGATIVE / NEUTRAL
-    confidence: float       # 0.0 – 1.0
-    emotion: Optional[str]  # joy / anger / surprise / sadness / fear / disgust / neutral
+    sentiment: str                                         
+    confidence: float                  
+    emotion: Optional[str]                                                               
     emotion_score: Optional[float]
 
-
-# ---------------------------------------------------------------------------
-# Lazy singleton loader (avoids loading 250 MB model at import time)
-# ---------------------------------------------------------------------------
 class SentimentService:
     _instance = None
     _lock = threading.Lock()
 
+    # Handles __new__.
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
@@ -53,8 +38,9 @@ class SentimentService:
                 cls._instance._initialized = False
         return cls._instance
 
+    # Handles _initialize.
     def _initialize(self):
-        """Load models once, thread-safe."""
+        
         if self._initialized:
             return
 
@@ -68,7 +54,7 @@ class SentimentService:
                 tokenizer=SENTIMENT_MODEL,
                 truncation=True,
                 max_length=MAX_LENGTH,
-                device=-1,  # CPU; set to 0 for GPU
+                device=-1,                         
             )
             logger.info("Sentiment model loaded.")
         except Exception as e:
@@ -94,29 +80,22 @@ class SentimentService:
 
         self._initialized = True
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
+    # Analyzes analyze.
     def analyze(self, text: str) -> SentimentResult:
-        """Analyze a single text string. Returns SentimentResult."""
+        
         results = self.analyze_batch([text])
         return results[0]
 
+    # Analyzes batch.
     def analyze_batch(self, texts: list[str]) -> list[SentimentResult]:
-        """
-        Analyze a batch of texts for maximum GPU/CPU throughput.
-        Falls back to a neutral result if models are unavailable.
-        """
+        
         self._initialize()
 
         if not texts:
             return []
 
-        # ---- Sentiment ----
         sentiments = self._run_sentiment(texts)
 
-        # ---- Emotion ----
         emotions = self._run_emotion(texts)
 
         results = []
@@ -133,10 +112,7 @@ class SentimentService:
             )
         return results
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
+    # Runs sentiment.
     def _run_sentiment(self, texts: list[str]) -> list[tuple[str, float]]:
         if self._sentiment_pipe is None:
             return [("NEUTRAL", 0.5)] * len(texts)
@@ -145,9 +121,9 @@ class SentimentService:
             raw = self._sentiment_pipe(texts, batch_size=BATCH_SIZE, truncation=True)
             out = []
             for r in raw:
-                label = r["label"].upper()  # POSITIVE / NEGATIVE
+                label = r["label"].upper()                       
                 score = float(r["score"])
-                # Map 2-class model to 3-class: low-confidence becomes NEUTRAL
+
                 if score < 0.65:
                     label = "NEUTRAL"
                 out.append((label, score))
@@ -156,6 +132,7 @@ class SentimentService:
             logger.error("Sentiment inference error: %s", e)
             return [("NEUTRAL", 0.5)] * len(texts)
 
+    # Runs emotion.
     def _run_emotion(self, texts: list[str]) -> list[tuple[Optional[str], Optional[float]]]:
         if self._emotion_pipe is None:
             return [(None, None)] * len(texts)
@@ -167,17 +144,12 @@ class SentimentService:
             logger.warning("Emotion inference error: %s", e)
             return [(None, None)] * len(texts)
 
-
-# ---------------------------------------------------------------------------
-# Module-level convenience function
-# ---------------------------------------------------------------------------
-
 _service = SentimentService()
 
-
+# Analyzes analyze.
 def analyze(text: str) -> SentimentResult:
     return _service.analyze(text)
 
-
+# Analyzes batch.
 def analyze_batch(texts: list[str]) -> list[SentimentResult]:
     return _service.analyze_batch(texts)

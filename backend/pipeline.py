@@ -1,12 +1,4 @@
-"""
-Main pipeline orchestrator.
 
-Connects:
-  Tweet Stream → Sentiment Analysis → Event Detection → Database → Dashboard
-
-Uses a producer/consumer pattern with an in-process queue and a thread pool
-for batch sentiment inference.
-"""
 
 import os
 import queue
@@ -24,25 +16,19 @@ from utils.text_cleaner import detect_team_tag
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 USE_MOCK_STREAM = os.getenv("USE_MOCK_STREAM", "true").lower() == "true"
 QUEUE_MAXSIZE   = int(os.getenv("QUEUE_MAXSIZE", "5000"))
 BATCH_SIZE      = int(os.getenv("PIPELINE_BATCH_SIZE", "16"))
 FLUSH_INTERVAL  = float(os.getenv("FLUSH_INTERVAL_SECONDS", "2.0"))
 VIRAL_THRESHOLD = int(os.getenv("VIRAL_LIKE_THRESHOLD", "200"))
 
-
 class Pipeline:
-    """
-    Singleton pipeline manager.
-    Call Pipeline().start() once at app startup.
-    """
+    
 
     _instance = None
     _lock = threading.Lock()
 
+    # Handles __new__.
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
@@ -50,6 +36,7 @@ class Pipeline:
                 cls._instance._started = False
         return cls._instance
 
+    # Initializes __init__.
     def __init__(self):
         if self._started:
             return
@@ -61,15 +48,15 @@ class Pipeline:
         self._consumer_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
+    # Starts start.
     def start(self):
-        """Initialize DB and start all pipeline components."""
+        
         if self._started:
             logger.warning("Pipeline already started.")
             return
 
         init_db()
 
-        # Select stream source
         if USE_MOCK_STREAM or not os.getenv("TWITTER_BEARER_TOKEN"):
             from backend.streaming.stream import MockStreamManager
             self._stream_manager = MockStreamManager(self._tweet_queue)
@@ -79,7 +66,6 @@ class Pipeline:
 
         self._stream_manager.start()
 
-        # Start consumer thread
         self._consumer_thread = threading.Thread(
             target=self._consume_loop,
             name="PipelineConsumer",
@@ -93,6 +79,7 @@ class Pipeline:
             USE_MOCK_STREAM, BATCH_SIZE, FLUSH_INTERVAL
         )
 
+    # Stops stop.
     def stop(self):
         self._stop_event.set()
         if self._stream_manager:
@@ -100,20 +87,14 @@ class Pipeline:
         self._executor.shutdown(wait=False)
         logger.info("Pipeline stopped.")
 
-    # ------------------------------------------------------------------
-    # Consumer loop
-    # ------------------------------------------------------------------
-
+    # Handles consume loop.
     def _consume_loop(self):
-        """
-        Drain the queue in batches, run sentiment, persist to DB.
-        Runs in its own thread so as not to block the Dash server.
-        """
+        
         batch: list[dict] = []
         last_flush = time.monotonic()
 
         while not self._stop_event.is_set():
-            # Collect up to BATCH_SIZE items or until FLUSH_INTERVAL elapses
+
             deadline = last_flush + FLUSH_INTERVAL
             while time.monotonic() < deadline and len(batch) < BATCH_SIZE:
                 remaining = deadline - time.monotonic()
@@ -128,11 +109,11 @@ class Pipeline:
                 batch = []
                 last_flush = time.monotonic()
 
+    # Processes batch.
     def _process_batch(self, batch: list[dict]):
-        """Run sentiment analysis on a batch, then persist and detect events."""
+        
         texts = [item["cleaned_text"] or item["text"] for item in batch]
 
-        # Sentiment inference (may take 100–500ms for batch)
         try:
             results: list[SentimentResult] = analyze_batch(texts)
         except Exception as e:
@@ -147,7 +128,6 @@ class Pipeline:
                 emotion    = r.emotion if r else None
                 is_viral   = int(item.get("like_count", 0) >= VIRAL_THRESHOLD)
 
-                # Persist tweet
                 try:
                     tweet = Tweet(
                         tweet_id      = item["tweet_id"],
@@ -169,7 +149,6 @@ class Pipeline:
                     logger.debug("Tweet insert skipped (likely dupe): %s", e)
                     continue
 
-                # Feed event detector
                 signal = TweetSignal(
                     timestamp  = item.get("created_at", datetime.utcnow()),
                     sentiment  = sentiment,
@@ -180,8 +159,9 @@ class Pipeline:
 
         self._update_aggregates(batch, results)
 
+    # Updates aggregates.
     def _update_aggregates(self, batch: list[dict], results: list[SentimentResult]):
-        """Update per-minute bucketed metrics for fast dashboard queries."""
+        
         buckets: dict[tuple, dict] = {}
 
         for i, item in enumerate(batch):
@@ -221,8 +201,9 @@ class Pipeline:
                 )
                 db.merge(metric)
 
+    # Handles on event.
     def _on_event(self, event: DetectedEvent):
-        """Persist detected match event to database."""
+        
         with get_db() as db:
             db.add(MatchEvent(
                 event_type      = event.event_type,
@@ -234,13 +215,8 @@ class Pipeline:
             ))
         logger.info("Persisted event: %s", event.event_type)
 
-
-# ---------------------------------------------------------------------------
-# Module-level singleton accessor
-# ---------------------------------------------------------------------------
-
 _pipeline = Pipeline()
 
-
+# Gets pipeline.
 def get_pipeline() -> Pipeline:
     return _pipeline

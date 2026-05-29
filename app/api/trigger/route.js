@@ -10,6 +10,7 @@ export const revalidate = 0
 const VIRAL_THRESHOLD = parseInt(process.env.VIRAL_LIKE_THRESHOLD || '200')
 const USE_MOCK = process.env.USE_MOCK_STREAM === 'true'
 
+// Handles G E T.
 export async function GET() {
   const db = getAdminClient()
   const start = Date.now()
@@ -85,6 +86,7 @@ export async function GET() {
   }
 }
 
+// Updates Metrics.
 async function updateMetrics(db, posts) {
   const now = new Date()
   const bucket = new Date(

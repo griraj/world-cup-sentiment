@@ -1,7 +1,4 @@
-"""
-Database models and connection layer for World Cup Sentiment Tracker.
-Uses SQLAlchemy with SQLite (swappable to PostgreSQL via env var).
-"""
+
 
 import os
 import logging
@@ -19,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/sentiment.db")
 
-# SQLite performance tuning
+# Handles set sqlite pragma.
 def _set_sqlite_pragma(dbapi_conn, connection_record):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+    cursor.execute("PRAGMA cache_size=-64000")              
     cursor.close()
 
 engine = create_engine(
@@ -39,9 +36,8 @@ if "sqlite" in DATABASE_URL:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-
 class Tweet(Base):
-    """Stores cleaned, analyzed tweets."""
+    
     __tablename__ = "tweets"
 
     id          = Column(Integer, primary_key=True, autoincrement=True)
@@ -50,14 +46,14 @@ class Tweet(Base):
     text        = Column(Text, nullable=False)
     cleaned_text= Column(Text, nullable=True)
     created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
-    sentiment   = Column(String(16), nullable=True)   # POSITIVE / NEGATIVE / NEUTRAL
+    sentiment   = Column(String(16), nullable=True)                                  
     confidence  = Column(Float, nullable=True)
-    emotion     = Column(String(32), nullable=True)   # joy / anger / excitement / etc.
+    emotion     = Column(String(32), nullable=True)                                    
     team_tag    = Column(String(64), nullable=True)
     language    = Column(String(8), nullable=True)
     retweet_count = Column(Integer, default=0)
     like_count  = Column(Integer, default=0)
-    is_viral    = Column(Integer, default=0)  # 0/1 flag
+    is_viral    = Column(Integer, default=0)            
 
     __table_args__ = (
         Index("ix_tweets_created_at", "created_at"),
@@ -65,6 +61,7 @@ class Tweet(Base):
         Index("ix_tweets_team_tag", "team_tag"),
     )
 
+    # Handles to dict.
     def to_dict(self):
         return {
             "id": self.id,
@@ -80,16 +77,15 @@ class Tweet(Base):
             "is_viral": bool(self.is_viral),
         }
 
-
 class MatchEvent(Base):
-    """Detected match events (goals, cards, VAR spikes)."""
+    
     __tablename__ = "events"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    event_type      = Column(String(64), nullable=False)   # GOAL / RED_CARD / SPIKE / etc.
+    event_type      = Column(String(64), nullable=False)                                   
     timestamp       = Column(DateTime, default=datetime.utcnow, nullable=False)
-    sentiment_shift = Column(Float, nullable=True)          # delta in sentiment score
-    tweet_volume    = Column(Integer, nullable=True)        # tweets in detection window
+    sentiment_shift = Column(Float, nullable=True)                                    
+    tweet_volume    = Column(Integer, nullable=True)                                    
     team_tag        = Column(String(64), nullable=True)
     description     = Column(Text, nullable=True)
 
@@ -97,6 +93,7 @@ class MatchEvent(Base):
         Index("ix_events_timestamp", "timestamp"),
     )
 
+    # Handles to dict.
     def to_dict(self):
         return {
             "id": self.id,
@@ -108,37 +105,36 @@ class MatchEvent(Base):
             "description": self.description,
         }
 
-
 class AggregatedMetric(Base):
-    """Per-minute bucketed aggregations for fast dashboard queries."""
+    
     __tablename__ = "aggregated_metrics"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    bucket_time     = Column(DateTime, nullable=False)      # floored to minute
+    bucket_time     = Column(DateTime, nullable=False)                         
     team_tag        = Column(String(64), nullable=True)
     tweet_count     = Column(Integer, default=0)
     positive_count  = Column(Integer, default=0)
     negative_count  = Column(Integer, default=0)
     neutral_count   = Column(Integer, default=0)
     avg_confidence  = Column(Float, nullable=True)
-    sentiment_score = Column(Float, nullable=True)          # -1 to +1 composite
+    sentiment_score = Column(Float, nullable=True)                              
 
     __table_args__ = (
         Index("ix_metrics_bucket", "bucket_time"),
         Index("ix_metrics_team", "team_tag", "bucket_time"),
     )
 
-
+# Initializes db.
 def init_db():
-    """Create all tables."""
+    
     os.makedirs("data", exist_ok=True)
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified.")
 
-
 @contextmanager
+# Gets db.
 def get_db() -> Session:
-    """Context manager for database sessions."""
+    
     db = SessionLocal()
     try:
         yield db

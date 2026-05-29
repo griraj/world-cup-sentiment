@@ -1,8 +1,4 @@
-"""
-Test suite for World Cup Sentiment Tracker.
 
-Run with:  pytest tests/ -v
-"""
 
 import pytest
 import queue
@@ -10,74 +6,79 @@ import time
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-
-# ── Text cleaner ──────────────────────────────────────────────────────────────
-
 class TestTextCleaner:
+    # Handles test removes urls.
     def test_removes_urls(self):
         from utils.text_cleaner import clean_text
         result = clean_text("Check this out https://t.co/abc123 great goal!")
         assert "https" not in result
         assert "great goal" in result
 
+    # Handles test removes mentions.
     def test_removes_mentions(self):
         from utils.text_cleaner import clean_text
         result = clean_text("@Messi what a player! Amazing goal!")
         assert "@Messi" not in result
 
+    # Handles test keeps hashtag words.
     def test_keeps_hashtag_words(self):
         from utils.text_cleaner import clean_text
         result = clean_text("#WorldCup is amazing", keep_hashtags=True)
         assert "WorldCup" in result
 
+    # Handles test removes rt prefix.
     def test_removes_rt_prefix(self):
         from utils.text_cleaner import clean_text
         result = clean_text("RT @someone: This is great")
         assert result.startswith("RT") is False
 
+    # Handles test is retweet detection.
     def test_is_retweet_detection(self):
         from utils.text_cleaner import is_retweet
         assert is_retweet("RT @user: some tweet") is True
         assert is_retweet("This is not a retweet") is False
 
+    # Handles test spam filter short.
     def test_spam_filter_short(self):
         from utils.text_cleaner import is_spam
         assert is_spam("hi") is True
         assert is_spam("Messi scored an amazing goal in extra time!") is False
 
+    # Handles test spam filter repetition.
     def test_spam_filter_repetition(self):
         from utils.text_cleaner import is_spam
         assert is_spam("goal goal goal goal goal goal goal goal") is True
 
+    # Handles test team detection argentina.
     def test_team_detection_argentina(self):
         from utils.text_cleaner import detect_team_tag
         assert detect_team_tag("Messi is the GOAT #WorldCup") == "Argentina"
 
+    # Handles test team detection brazil.
     def test_team_detection_brazil(self):
         from utils.text_cleaner import detect_team_tag
         assert detect_team_tag("Neymar injured again, so sad") == "Brazil"
 
+    # Handles test team detection none.
     def test_team_detection_none(self):
         from utils.text_cleaner import detect_team_tag
         assert detect_team_tag("What a great match today!") is None
 
+    # Handles test extract hashtags.
     def test_extract_hashtags(self):
         from utils.text_cleaner import extract_hashtags
         tags = extract_hashtags("Love #WorldCup and #Argentina tonight!")
         assert "worldcup" in tags
         assert "argentina" in tags
 
-
-# ── Event detector ────────────────────────────────────────────────────────────
-
 class TestEventDetector:
+    # Handles test no event on low volume.
     def test_no_event_on_low_volume(self):
         from backend.events.detector import EventDetector, TweetSignal
         detector = EventDetector()
         events = []
         detector.register_callback(lambda e: events.append(e))
 
-        # Low steady volume
         for _ in range(3):
             detector.ingest(TweetSignal(
                 timestamp=datetime.utcnow(),
@@ -87,22 +88,22 @@ class TestEventDetector:
             ))
         assert len(events) == 0
 
+    # Handles test sentiment shift detection.
     def test_sentiment_shift_detection(self):
         from backend.events.detector import EventDetector, TweetSignal, SENTIMENT_SHIFT_DELTA
         detector = EventDetector()
         events = []
         detector.register_callback(lambda e: events.append(e))
 
-        # Build baseline with positive tweets
         now = datetime.utcnow()
         for _ in range(10):
             detector.ingest(TweetSignal(timestamp=now, sentiment="POSITIVE", confidence=0.95, team_tag=None))
 
-        # Force sentiment score to be set
         initial_score = detector._last_sentiment_score
         assert initial_score is not None
         assert initial_score > 0
 
+    # Handles test dominant team.
     def test_dominant_team(self):
         from backend.events.detector import EventDetector, TweetSignal
         signals = [
@@ -112,6 +113,7 @@ class TestEventDetector:
         ]
         assert EventDetector._dominant_team(signals) == "Argentina"
 
+    # Handles test sentiment score all positive.
     def test_sentiment_score_all_positive(self):
         from backend.events.detector import EventDetector, TweetSignal
         signals = [
@@ -121,6 +123,7 @@ class TestEventDetector:
         score = EventDetector._compute_score(signals)
         assert score == pytest.approx(1.0)
 
+    # Handles test sentiment score mixed.
     def test_sentiment_score_mixed(self):
         from backend.events.detector import EventDetector, TweetSignal
         signals = [
@@ -130,10 +133,8 @@ class TestEventDetector:
         score = EventDetector._compute_score(signals)
         assert score == pytest.approx(0.0)
 
-
-# ── Mock stream ───────────────────────────────────────────────────────────────
-
 class TestMockStream:
+    # Handles test produces tweets.
     def test_produces_tweets(self):
         from backend.streaming.stream import MockStreamManager
         q = queue.Queue(maxsize=100)
@@ -143,6 +144,7 @@ class TestMockStream:
         mgr.stop()
         assert not q.empty()
 
+    # Handles test tweet payload structure.
     def test_tweet_payload_structure(self):
         from backend.streaming.stream import MockStreamManager
         q = queue.Queue(maxsize=100)
@@ -158,15 +160,12 @@ class TestMockStream:
         assert "created_at" in tweet
         assert isinstance(tweet["created_at"], datetime)
 
-
-# ── Database ──────────────────────────────────────────────────────────────────
-
 class TestDatabase:
+    # Handles test init creates tables.
     def test_init_creates_tables(self, tmp_path):
         import os
         os.environ["DATABASE_URL"] = f"sqlite:///{tmp_path}/test.db"
 
-        # Re-import with test DB URL
         import importlib
         import backend.db.models as models_module
         importlib.reload(models_module)
@@ -179,6 +178,7 @@ class TestDatabase:
         assert "events" in tables
         assert "aggregated_metrics" in tables
 
+    # Handles test tweet to dict.
     def test_tweet_to_dict(self):
         from backend.db.models import Tweet
         t = Tweet(
@@ -193,12 +193,10 @@ class TestDatabase:
         assert d["sentiment"] == "POSITIVE"
         assert d["confidence"] == pytest.approx(0.92, abs=0.001)
 
-
-# ── Sentiment analyzer (unit tests without loading model) ─────────────────────
-
 class TestSentimentAnalyzer:
+    # Handles test fallback on no model.
     def test_fallback_on_no_model(self):
-        """Analyzer should return NEUTRAL when model is unavailable."""
+        
         from backend.sentiment.analyzer import SentimentService
         svc = SentimentService.__new__(SentimentService)
         svc._initialized = True
@@ -209,6 +207,7 @@ class TestSentimentAnalyzer:
         assert results[0].sentiment == "NEUTRAL"
         assert results[0].confidence == 0.5
 
+    # Handles test batch empty input.
     def test_batch_empty_input(self):
         from backend.sentiment.analyzer import SentimentService
         svc = SentimentService.__new__(SentimentService)
@@ -219,6 +218,7 @@ class TestSentimentAnalyzer:
         results = svc.analyze_batch([])
         assert results == []
 
+    # Handles test result dataclass fields.
     def test_result_dataclass_fields(self):
         from backend.sentiment.analyzer import SentimentResult
         r = SentimentResult(sentiment="POSITIVE", confidence=0.88, emotion="joy", emotion_score=0.75)

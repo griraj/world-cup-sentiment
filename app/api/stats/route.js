@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 
 export const revalidate = 0
 
+// Handles G E T.
 export async function GET() {
   const now = Date.now()
   const thirtyMin = new Date(now - 30 * 60 * 1000).toISOString()
@@ -63,7 +64,6 @@ export async function GET() {
       supabase.from('posts').select('sentiment').gte('created_at', fiveMin),
     ])
 
-  // word frequency
   const stopwords = new Set([
     'the','a','an','is','it','in','of','to','and','for','that','this',
     'are','was','be','have','has','he','she','they','we','you','but',
@@ -83,7 +83,6 @@ export async function GET() {
     Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 50)
   )
 
-  // momentum score
   let momentumScore = 0
   const mPosts = momentum.data || []
   if (mPosts.length > 0) {
@@ -98,7 +97,6 @@ export async function GET() {
     momentumScore = totalW ? totalS / totalW : 0
   }
 
-  // summary stats
   const recentPosts = recent.data || []
   const recentCount = recentPosts.length
   const posCount = recentPosts.filter(p => p.sentiment === 'POSITIVE').length

@@ -1,10 +1,4 @@
-"""
-Dashboard data access layer.
 
-All Plotly Dash callbacks query data through these functions.
-Optimized for low-latency reads from the aggregated_metrics table,
-with fallback to raw tweets for the live feed.
-"""
 
 import logging
 from datetime import datetime, timedelta
@@ -17,18 +11,12 @@ from backend.db.models import get_db, Tweet, MatchEvent, AggregatedMetric
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Timeline queries
-# ---------------------------------------------------------------------------
-
+# Gets sentiment timeline.
 def get_sentiment_timeline(
     minutes: int = 30,
     team_tag: Optional[str] = None
 ) -> pd.DataFrame:
-    """
-    Return per-minute sentiment scores for the last N minutes.
-    Columns: bucket_time, sentiment_score, tweet_count, positive_count, negative_count
-    """
+    
     cutoff = datetime.utcnow() - timedelta(minutes=minutes)
 
     with get_db() as db:
@@ -57,11 +45,9 @@ def get_sentiment_timeline(
         "neutral_count":  r.neutral_count,
     } for r in rows])
 
-
+# Gets volume timeline.
 def get_volume_timeline(minutes: int = 30) -> pd.DataFrame:
-    """
-    Return tweets-per-minute for the last N minutes (all teams combined).
-    """
+    
     cutoff = datetime.utcnow() - timedelta(minutes=minutes)
 
     with get_db() as db:
@@ -84,19 +70,12 @@ def get_volume_timeline(minutes: int = 30) -> pd.DataFrame:
 
     return pd.DataFrame([{"bucket_time": r.bucket_time, "tweet_count": r.tweet_count} for r in rows])
 
-
-# ---------------------------------------------------------------------------
-# Team comparison
-# ---------------------------------------------------------------------------
-
+# Gets team comparison.
 def get_team_comparison(
     teams: list[str],
     minutes: int = 30
 ) -> pd.DataFrame:
-    """
-    Return per-team sentiment scores over the last N minutes.
-    Columns: bucket_time, team_tag, sentiment_score
-    """
+    
     if not teams:
         return pd.DataFrame()
 
@@ -123,13 +102,9 @@ def get_team_comparison(
         "tweet_count":     r.tweet_count,
     } for r in rows])
 
-
-# ---------------------------------------------------------------------------
-# Live feed
-# ---------------------------------------------------------------------------
-
+# Gets live feed.
 def get_live_feed(limit: int = 20) -> list[dict]:
-    """Return the N most recent analyzed tweets for the live feed."""
+    
     with get_db() as db:
         rows = (
             db.query(Tweet)
@@ -139,15 +114,9 @@ def get_live_feed(limit: int = 20) -> list[dict]:
         )
     return [r.to_dict() for r in rows]
 
-
-# ---------------------------------------------------------------------------
-# Stats cards
-# ---------------------------------------------------------------------------
-
+# Gets summary stats.
 def get_summary_stats(minutes: int = 5) -> dict:
-    """
-    Return aggregate stats for stat cards on the dashboard.
-    """
+    
     cutoff = datetime.utcnow() - timedelta(minutes=minutes)
 
     with get_db() as db:
@@ -172,13 +141,9 @@ def get_summary_stats(minutes: int = 5) -> dict:
         "tweets_per_min": round(recent / minutes, 1),
     }
 
-
-# ---------------------------------------------------------------------------
-# Events
-# ---------------------------------------------------------------------------
-
+# Gets recent events.
 def get_recent_events(limit: int = 10) -> list[dict]:
-    """Return recent detected match events."""
+    
     with get_db() as db:
         rows = (
             db.query(MatchEvent)
@@ -188,15 +153,9 @@ def get_recent_events(limit: int = 10) -> list[dict]:
         )
     return [r.to_dict() for r in rows]
 
-
-# ---------------------------------------------------------------------------
-# Word frequency for word cloud
-# ---------------------------------------------------------------------------
-
+# Gets word frequencies.
 def get_word_frequencies(minutes: int = 10, top_n: int = 80) -> dict[str, int]:
-    """
-    Return the top N words from recent tweets for word cloud rendering.
-    """
+    
     cutoff = datetime.utcnow() - timedelta(minutes=minutes)
 
     STOPWORDS = {
@@ -227,16 +186,9 @@ def get_word_frequencies(minutes: int = 10, top_n: int = 80) -> dict[str, int]:
     sorted_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)[:top_n]
     return dict(sorted_words)
 
-
-# ---------------------------------------------------------------------------
-# Momentum meter
-# ---------------------------------------------------------------------------
-
+# Gets momentum score.
 def get_momentum_score(seconds: int = 30) -> float:
-    """
-    Returns a -1 to +1 momentum score based on the most recent tweets.
-    Weighted by confidence and recency.
-    """
+    
     cutoff = datetime.utcnow() - timedelta(seconds=seconds)
 
     with get_db() as db:
